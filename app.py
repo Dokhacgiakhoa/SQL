@@ -171,33 +171,82 @@ def start_quiz():
         st.warning("Vui lòng chọn nhóm!")
         return
     
-    # Filter questions by difficulty
-    easy_questions = [q for q in questions if q.get('difficulty') == 'easy']
-    medium_questions = [q for q in questions if q.get('difficulty') == 'medium']
-    hard_questions = [q for q in questions if q.get('difficulty') == 'hard']
+    # Filter questions by difficulty AND type
+    easy_single = [q for q in questions if q.get('difficulty') == 'easy' and q.get('type') == 'single']
+    easy_multi = [q for q in questions if q.get('difficulty') == 'easy' and q.get('type') == 'multiple']
     
-    # Sample Logic: 10 Easy, 6 Medium, 4 Hard
-    selected_easy = random.sample(easy_questions, min(len(easy_questions), 10))
-    selected_medium = random.sample(medium_questions, min(len(medium_questions), 6))
-    selected_hard = random.sample(hard_questions, min(len(hard_questions), 4))
+    medium_single = [q for q in questions if q.get('difficulty') == 'medium' and q.get('type') == 'single']
+    medium_multi = [q for q in questions if q.get('difficulty') == 'medium' and q.get('type') == 'multiple']
+
+    hard_single = [q for q in questions if q.get('difficulty') == 'hard' and q.get('type') == 'single']
+    hard_multi = [q for q in questions if q.get('difficulty') == 'hard' and q.get('type') == 'multiple']
     
-    # Combine WITHOUT global shuffle to keep order: Easy -> Medium -> Hard
-    quiz_pool = selected_easy + selected_medium + selected_hard
+    # Sample Logic: 
+    # Easy: 5 single + 5 multiple
+    # Medium: 3 single + 3 multiple
+    # Hard: 2 single + 2 multiple
+    # Total: 20 Questions
+    
+    sel_easy_s = random.sample(easy_single, min(len(easy_single), 5))
+    sel_easy_m = random.sample(easy_multi, min(len(easy_multi), 5))
+    
+    sel_med_s = random.sample(medium_single, min(len(medium_single), 3))
+    sel_med_m = random.sample(medium_multi, min(len(medium_multi), 3))
+    
+    sel_hard_s = random.sample(hard_single, min(len(hard_single), 2))
+    sel_hard_m = random.sample(hard_multi, min(len(hard_multi), 2))
+    
+    # Combine lists and shuffle within difficulty tiers if desired, 
+    # OR keep structured Easy -> Medium -> Hard
+    # Current request: Easy phase -> Medium phase -> Hard phase
+    
+    # Combine Easy
+    pool_easy = sel_easy_s + sel_easy_m
+    random.shuffle(pool_easy)
+    
+    # Combine Medium
+    pool_med = sel_med_s + sel_med_m
+    random.shuffle(pool_med)
+    
+    # Combine Hard
+    pool_hard = sel_hard_s + sel_hard_m
+    random.shuffle(pool_hard)
+    
+    # Final Sequence
+    quiz_pool = pool_easy + pool_med + pool_hard
     
     # Shuffle options for each selected question
     final_questions = []
+    # Shuffle options for each selected question
+    final_questions = []
+    max_score = 0
+    
     for q in quiz_pool:
         options = q['options'].copy()
         random.shuffle(options)
+        
+        diff = q.get('difficulty', 'easy')
+        q_type = q.get('type', 'single')
+        weight = get_points(diff)
+        
+        # Calculate Max Points for this Question
+        if q_type == 'single':
+            max_score += weight
+        else:
+            # Multi: Max Points = Num Correct Options * Weight
+            max_score += len(q['answer']) * weight
+
         final_questions.append({
             'question': q['question'],
             'options': options,
             'answer': q['answer'],
             'explanation': q['explanation'],
-            'difficulty': q.get('difficulty', 'easy')
+            'difficulty': diff,
+            'type': q_type
         })
     
     st.session_state.quiz_data = final_questions
+    st.session_state.max_possible_score = max_score
     st.session_state.current_index = 0
     st.session_state.score = 0
     st.session_state.user_answers = {}
@@ -215,17 +264,33 @@ def submit_answer(selected):
     current_q = st.session_state.quiz_data[q_idx]
     correct = current_q['answer']
     difficulty = current_q.get('difficulty', 'easy')
+    q_type = current_q.get('type', 'single')
+    weight = get_points(difficulty)
     
     st.session_state.user_answers[q_idx] = selected
-    if selected == correct:
-        st.session_state.score += get_points(difficulty)
+    
+    # Validation Logic (Partial Credit)
+    points_earned = 0
+    if q_type == 'single':
+        if selected == correct:
+            points_earned = weight
+    elif q_type == 'multiple':
+        # Count intersection
+        # selected is list, correct is list
+        user_set = set(selected)
+        correct_set = set(correct)
+        matches = user_set & correct_set
+        points_earned = len(matches) * weight
+            
+    st.session_state.score += points_earned
     
     if st.session_state.current_index < len(st.session_state.quiz_data) - 1:
         st.session_state.current_index += 1
         st.rerun()
     else:
-        # Save result with group name
-        save_result(st.session_state.username, st.session_state.group_name, st.session_state.score, 34) 
+        # Save result with total possible score of THIS generated quiz
+        total_possible = st.session_state.get('max_possible_score', 1)
+        save_result(st.session_state.username, st.session_state.group_name, st.session_state.score, total_possible) 
         st.session_state.page = 'result'
         st.rerun()
 
@@ -243,10 +308,12 @@ if st.session_state.page == 'login':
         total_q = len(questions)
         st.markdown(f"**Ngân hàng câu hỏi:** {total_q} câu")
         st.markdown("""
-        **Cấu trúc bài thi (20 câu - 34 điểm):**
-        - Phase 1: 10 câu Dễ (1 điểm/câu)
-        - Phase 2: 6 câu Trung bình (2 điểm/câu)
-        - Phase 3: 4 câu Khó (3 điểm/câu)
+        **Cấu trúc bài thi:**
+        - **Phase 1: 10 câu Dễ** (1 điểm/ý đúng)
+        - **Phase 2: 6 câu Trung bình** (2 điểm/ý đúng)
+        - **Phase 3: 4 câu Khó** (3 điểm/ý đúng)
+        
+        *Lưu ý: Điểm số được tính dựa trên số lượng ý trả lời đúng (bao gồm điểm thành phần trong câu hỏi nhiều đáp án).*
         """)
         st.markdown("---")
         
@@ -567,35 +634,61 @@ elif st.session_state.page == 'quiz':
         'hard': '#dc3545'     # Red
     }
     diff_label = {
-        'easy': 'Dễ (1 điểm)',
-        'medium': 'Trung bình (2 điểm)',
-        'hard': 'Khó (3 điểm)'
+        'easy': 'Dễ (1 điểm/ý đúng)',
+        'medium': 'Trung bình (2 điểm/ý đúng)',
+        'hard': 'Khó (3 điểm/ý đúng)'
     }
     color = diff_color.get(current_diff, '#777')
     label = diff_label.get(current_diff, current_diff)
+    q_type = q_data.get('type', 'single')
+    type_label = "Chọn 1 đáp án" if q_type == "single" else "Chọn nhiều đáp án"
 
     st.markdown(f"""
     <div class="question-container">
         <span style="background-color: {color}; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; color: white; display: inline-block; margin-bottom: 10px;">{label}</span>
+        <span style="background-color: #555; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; color: white; display: inline-block; margin-bottom: 10px;">{type_label}</span>
         <h3>{q_data['question']}</h3>
     </div>
     """, unsafe_allow_html=True)
     
-    # Options
-    selected_option = st.radio(
-        "Chọn đáp án:",
-        q_data['options'],
-        key=f"q_{idx}",
-        index=None
-    )
+    # Options Rendering Logic
+    # We use a helper key 'current_user_selection' to track inputs but the submit button reads it from state
+    # Warning: st.radio and st.multiselect keep state automatically if key is consistent.
+    # Key must follow idx to reset on new question.
+    
+    selected_val = None
+    
+    if q_type == 'single':
+        selected_val = st.radio(
+            "Chọn đáp án:",
+            q_data['options'],
+            key=f"q_{idx}_single",
+            index=None
+        )
+    elif q_type == 'multiple':
+        st.markdown("**Chọn các đáp án đúng:**")
+        selected_val = []
+        for i, opt in enumerate(q_data['options']):
+            # Ensure unique key for each option in each question
+            checked = st.checkbox(opt, key=f"q_{idx}_multi_{i}")
+            if checked:
+                selected_val.append(opt)
     
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("Tiếp theo ➡️"):
-            if selected_option:
-                submit_answer(selected_option)
+            # Check correctness of empty list handling vs None
+            if q_type == 'single':
+                 if selected_val:
+                     submit_answer(selected_val)
+                 else:
+                     st.warning("Vui lòng chọn đáp án!")
             else:
-                st.warning("Vui lòng chọn đáp án trước khi tiếp tục!")
+                 # Multiple choice can have empty selection, but typically we require at least one
+                 if selected_val:
+                     submit_answer(selected_val)
+                 else:
+                     st.warning("Vui lòng chọn ít nhất một đáp án!")
 
 # 3. Result Screen
 elif st.session_state.page == 'result':
@@ -603,7 +696,7 @@ elif st.session_state.page == 'result':
     st.title("🎉 Kết Quả Bài Làm")
     
     score = st.session_state.score
-    total_score = 34 
+    total_score = st.session_state.get('max_possible_score', 34)
     percent = (score / total_score) * 100
     
     col1, col2, col3, col4 = st.columns(4)
@@ -634,12 +727,29 @@ elif st.session_state.page == 'result':
         user_ans = st.session_state.user_answers.get(i)
         correct_ans = q['answer']
         diff = q.get('difficulty', 'easy')
-        pts = get_points(diff)
+        q_type = q.get('type', 'single')
+        weight = get_points(diff)
         
-        with st.expander(f"Câu {i+1} ({diff.upper()} - {pts} điểm): {q['question']}"):
-            if user_ans == correct_ans:
-                st.success(f"Bạn chọn: {user_ans} (+{pts} điểm)")
+        # Recalculate points earned for display
+        points_earned = 0
+        if q_type == 'single':
+            if user_ans == correct_ans: points_earned = weight
+        else:
+            user_set = set(user_ans)
+            correct_set = set(correct_ans)
+            matches = user_set & correct_set
+            points_earned = len(matches) * weight
+            
+        max_q_points = weight if q_type == 'single' else len(correct_ans) * weight
+
+        with st.expander(f"Câu {i+1} ({diff.upper()} - {max_q_points} điểm tối đa): {q['question']}"):
+            if points_earned == max_q_points:
+                st.success(f"Tuyệt đối! Bạn được +{points_earned} điểm")
+            elif points_earned > 0:
+                st.warning(f"Đúng một phần! Bạn được +{points_earned}/{max_q_points} điểm")
             else:
-                st.error(f"Bạn chọn: {user_ans} (0 điểm)")
-                st.info(f"Đáp án đúng: {correct_ans}")
+                st.error(f"Sai rồi! Bạn được 0 điểm")
+            
+            st.write(f"**Lựa chọn của bạn:** {user_ans}")
+            st.write(f"**Đáp án đúng:** {correct_ans}")
             st.markdown(f"**Giải thích:** {q['explanation']}")
